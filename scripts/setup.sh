@@ -177,7 +177,7 @@ info "Find these in the AWS console under: Bedrock → Agents → your agent →
 if [ -n "${REGION:-}" ]; then
   aws bedrock list-foundation-models --region "${REGION:-us-east-1}" >/dev/null 2>&1 \
     && pass "Bedrock API access confirmed" \
-    || warn "Bedrock access check failed — your user may need bedrock:InvokeAgent permission on your agent"
+    || warn "Bedrock access check failed — your user may need bedrock-agentcore:InvokeAgentRuntime permission on your agent"
 fi
 
 # ── SUMMARY ───────────────────────────────────────────────────────────────────

@@ -145,8 +145,11 @@ The Bedrock policy on the task role looks like:
 ```json
 {
   "Effect": "Allow",
-  "Action": ["bedrock:InvokeAgent"],
-  "Resource": "arn:aws:bedrock-agentcore:REGION:ACCOUNT:runtime/YOUR_AGENT"
+  "Action": ["bedrock-agentcore:InvokeAgentRuntime"],
+  "Resource": [
+    "arn:aws:bedrock-agentcore:REGION:ACCOUNT:runtime/YOUR_AGENT",
+    "arn:aws:bedrock-agentcore:REGION:ACCOUNT:runtime/YOUR_AGENT/runtime-endpoint/*"
+  ]
 }
 ```
 
