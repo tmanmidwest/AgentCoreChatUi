@@ -79,15 +79,12 @@ echo ""
 read -rp "  Agent ARN: " AGENT_ARN
 [ -n "$AGENT_ARN" ] || error "Agent ARN is required."
 
-read -rp "  Agent ID: " AGENT_ID
-[ -n "$AGENT_ID" ] || error "Agent ID is required."
-
-read -rp "  Agent Alias ID: " AGENT_ALIAS_ID
-[ -n "$AGENT_ALIAS_ID" ] || error "Agent Alias ID is required."
-
 ARN_REGION=$(echo "$AGENT_ARN" | awk -F: '{print $4}')
 read -rp "  Agent region [${ARN_REGION:-$REGION}]: " AGENT_REGION_INPUT
 AGENT_REGION="${AGENT_REGION_INPUT:-${ARN_REGION:-$REGION}}"
+
+read -rp "  Endpoint name [DEFAULT]: " AGENT_ENDPOINT_NAME
+AGENT_ENDPOINT_NAME="${AGENT_ENDPOINT_NAME:-DEFAULT}"
 
 read -rp "  App display name [Agent Chat]: " APP_DISPLAY_NAME
 APP_DISPLAY_NAME="${APP_DISPLAY_NAME:-Agent Chat}"
@@ -216,8 +213,7 @@ TG_ARN=$TG_ARN
 LOG_GROUP=$LOG_GROUP
 TASK_DEF_ARN=$TASK_DEF_ARN
 AGENT_ARN=$AGENT_ARN
-AGENT_ID=$AGENT_ID
-AGENT_ALIAS_ID=$AGENT_ALIAS_ID
+AGENT_ENDPOINT_NAME=$AGENT_ENDPOINT_NAME
 AGENT_REGION=$AGENT_REGION
 SECRET_ARN=$SECRET_ARN
 EOF

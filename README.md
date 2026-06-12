@@ -1,187 +1,242 @@
-# agentcore-chat — AWS ECS Fargate Deploy Scripts
+# AgentCore Chat
 
-Deploy, manage, update, and teardown the agentcore-chat app on your own AWS account.
-Each person runs these scripts against their own AWS account — fully isolated instances.
-
-The app itself lives in the sibling directory (the React + Node.js source). These
-scripts build it, push it to ECR, and run it on Fargate.
+A clean, self-hosted chat interface for AWS Bedrock AgentCore runtime agents. React frontend + Node.js backend, per-user chat history, simple username/password auth.
 
 ---
 
-## What you need
+## Stack
 
-- **AWS account** with permissions for ECS, ECR, EFS, EC2, ELB, IAM, Secrets Manager, Bedrock
-- **AWS CLI v2** — https://aws.amazon.com/cli/
-- **Docker Desktop** — https://www.docker.com/products/docker-desktop/
-- **Node.js** — https://nodejs.org/ (for frontend build)
-- **Git** — on Mac run `xcode-select --install`
+| Layer | Tech |
+|-------|------|
+| Frontend | React 18, Vite, react-markdown |
+| Backend | Node.js (ESM), Express |
+| Database | SQLite via better-sqlite3 |
+| Auth | JWT (8h expiry), bcrypt passwords |
+| Agent | AWS Bedrock AgentCore via `@aws-sdk/client-bedrock-agent-runtime` |
 
 ---
 
-## Quick start (new deployment)
+## Quick start (local dev)
 
 ```bash
-# Make all scripts executable (one time only)
-chmod +x setup.sh deploy.sh manage.sh update.sh teardown.sh restore-state.sh
+git clone <your-repo>
+cd agentcore-chat
 
-# 1. Check all prerequisites are in place
-./setup.sh
+# 1. Backend env
+cp backend/.env.example backend/.env
+# Edit backend/.env — fill in AGENT_ARN, AGENT_ID, AGENT_ALIAS_ID, AWS creds, JWT_SECRET
 
-# 2. Deploy — takes about 10 minutes, prints your app URL when done
-./deploy.sh
+# 2. Frontend env
+cp frontend/.env.example frontend/.env
+# VITE_API_URL=http://localhost:3001 is the default — leave as-is for local dev
+
+# 3. Install and run
+npm install
+npm run dev
 ```
 
-`deploy.sh` will prompt you for:
-
-| Prompt | Where to find it |
-|--------|-----------------|
-| **AWS region** | Choose from the numbered list |
-| **Agent ARN** | Bedrock console → Agents → your agent → copy the ARN |
-| **Agent ID** | Bedrock console → Agents → your agent → Aliases tab |
-| **Agent Alias ID** | Bedrock console → Agents → your agent → Aliases tab |
-| **App display name** | Whatever you want shown in the UI (e.g. "IT Helpdesk") |
-| **IAM role vs access keys** | Role = recommended; keys = simpler for testing |
-| **JWT secret** | Leave blank to auto-generate |
-| **Open registration** | No for internal tools; yes for broader access |
-
-First visit to the app: register your admin account on the login screen.
-Registration auto-locks after the first account is created (unless you chose open).
+Open http://localhost:5173. The first registration creates an admin account; after that, registration is closed unless you set `ALLOW_REGISTRATION=true`.
 
 ---
 
-## Deploying from a different agent or AWS environment
+## Configuration
 
-The same scripts work for any agent. Just run `./deploy.sh` from a fresh directory
-and enter the new agent's ARN / ID / alias when prompted. Each deployment is fully
-isolated in its own AWS account.
+### Backend `.env`
 
-To switch an existing deployment to a different agent without redeploying from scratch:
+| Variable | Required | Description |
+|----------|----------|-------------|
+| `AGENT_ARN` | ✅ | Full ARN of your AgentCore runtime agent |
+| `AGENT_ID` | ✅* | Bedrock agent ID (see note below) |
+| `AGENT_ALIAS_ID` | ✅* | Bedrock agent alias ID (see note below) |
+| `AWS_REGION` | ✅ | Region your agent is in (e.g. `us-east-1`) |
+| `AWS_ACCESS_KEY_ID` | ⚠️ | For local/Vercel/Railway. Omit on ECS (use IAM role) |
+| `AWS_SECRET_ACCESS_KEY` | ⚠️ | Same as above |
+| `JWT_SECRET` | ✅ | Random 32+ char string. Generate: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` |
+| `FRONTEND_URL` | ✅ | URL of your frontend (for CORS). Comma-separate multiple. |
+| `PORT` | – | Default: `3001` |
+| `ALLOW_REGISTRATION` | – | `"true"` to open public registration. Default: `false` |
+| `DB_PATH` | – | SQLite file path. Default: `./data/chat.db` |
 
-```bash
-./update.sh --reconfigure
-```
+> **\* AgentCore ARN note:** AgentCore runtime ARNs (`arn:aws:bedrock-agentcore:…:runtime/…`) don't embed the agent ID and alias ID in a parseable way. You need to set `AGENT_ID` and `AGENT_ALIAS_ID` separately. Find them in the Bedrock console under **Agents → your agent → Aliases**. Standard agent-alias ARNs (`arn:aws:bedrock:…:agent-alias/AGENT_ID/ALIAS_ID`) are parsed automatically.
 
-This prompts for new agent ARN / ID / alias, updates the ECS task definition, and
-force-redeploys — no image rebuild needed.
+### Frontend `.env`
 
----
-
-## Pushing an update
-
-When changes have been merged to the main branch on GitHub:
-
-```bash
-./update.sh
-```
-
-Shows you the exact commit being deployed, asks for confirmation, rebuilds the image
-and redeploys automatically.
-
----
-
-## Day-to-day management
-
-```bash
-./manage.sh status     # Is it running? What's the URL?
-./manage.sh stop       # Pause the app — data kept, Fargate charges stop
-./manage.sh start      # Resume after stopping
-./manage.sh restart    # Restart without a code change
-./manage.sh logs       # Stream live logs (Ctrl+C to stop)
-./manage.sh url        # Print the app URL
-./manage.sh config     # Show agent ARN, app name, and other config
-```
+| Variable | Description |
+|----------|-------------|
+| `VITE_API_URL` | URL of your backend API. In production, this is your Railway/ECS URL. |
+| `VITE_APP_NAME` | Display name shown in the UI. Default: `Agent Chat` |
 
 ---
 
-## Managing from a second machine
+## Deploying to a new agent / AWS environment
 
-The management scripts read a local `.agentcore-chat-state` file that `deploy.sh` writes.
-It holds AWS resource IDs and is not synced anywhere, so a second machine won't have it.
+This repo is designed to be reusable across agents and environments. To point it at a different agent:
 
-To manage an existing deployment from another machine:
-
-```bash
-chmod +x restore-state.sh
-./restore-state.sh             # uses your default AWS region
-./restore-state.sh us-west-2   # or pass the region you deployed to
-```
-
-You'll be re-prompted for the agent ARN / ID / alias (these can't be discovered from
-AWS resource names). All other values are rediscovered automatically.
+1. Set a new `AGENT_ARN` (and `AGENT_ID` / `AGENT_ALIAS_ID`) in the backend `.env`
+2. Update `AWS_REGION` if it's in a different region
+3. Update AWS credentials to an IAM user/role that has `bedrock:InvokeAgent` permission on the new agent
+4. Restart the backend — no code changes needed
 
 ---
 
-## Remove everything
+## Deployment options
 
-```bash
-./teardown.sh
-```
+### Option A — Railway (easiest, ~5 min)
 
-Deletes all AWS resources — ECS, ECR, EFS, ALB, security groups, logs, and secrets.
-Type `delete` to confirm. Stops all charges. **All chat history and user data is permanently deleted.**
+Railway runs the Docker container and provides a managed SQLite volume.
 
----
+1. Push this repo to GitHub
+2. Go to https://railway.app → New Project → Deploy from GitHub repo
+3. Railway auto-detects `railway.toml` and the `Dockerfile`
+4. Set environment variables in the Railway dashboard (Variables tab)
+5. Enable a persistent volume mounted at `/data` (for SQLite)
+6. Deploy frontend separately to **Vercel** (see below) or serve the built static files from the same container
 
-## How costs work
-
-While running (~1 task):
-- **Fargate:** ~$0.02/hr (0.5 vCPU, 1GB RAM)
-- **ALB:** ~$0.50/day
-- **EFS:** ~$0.30/GB/month (SQLite is tiny — cents/month)
-- **ECR:** ~$0.10/GB/month for stored images
-
-When stopped (`./manage.sh stop`): Fargate charges stop. ALB still runs (~$0.50/day).
-When torn down (`./teardown.sh`): all charges stop.
-
----
-
-## IAM permissions required
-
-Your AWS user needs access to: ECS, ECR, EFS, EC2, ELB, IAM, CloudWatch Logs,
-Secrets Manager, and Bedrock. If using an IAM role instead of access keys, the
-task role (`agentcore-chat-task-role`) is created automatically by `deploy.sh`.
-
-The Bedrock policy on the task role looks like:
+**IAM policy for Railway (access keys):**
 ```json
 {
-  "Effect": "Allow",
-  "Action": ["bedrock:InvokeAgent"],
-  "Resource": "arn:aws:bedrock-agentcore:REGION:ACCOUNT:runtime/YOUR_AGENT"
+  "Version": "2012-10-17",
+  "Statement": [{
+    "Effect": "Allow",
+    "Action": ["bedrock:InvokeAgent"],
+    "Resource": "arn:aws:bedrock-agentcore:us-east-1:YOUR_ACCOUNT:runtime/*"
+  }]
 }
 ```
 
 ---
 
-## Secrets
+### Option B — Vercel (frontend) + Railway (backend)
 
-Sensitive values (JWT secret, AWS access keys if used) are stored in AWS Secrets Manager
-under `agentcore-chat/config` — never in the state file or the container image.
-`teardown.sh` deletes the secret along with everything else.
+1. **Backend on Railway** — as above, but set `FRONTEND_URL` to your Vercel URL
+2. **Frontend on Vercel:**
+   ```bash
+   vercel
+   ```
+   Set these Vercel env vars:
+   - `VITE_API_URL` → your Railway backend URL (e.g. `https://my-backend.railway.app`)
+   - `VITE_APP_NAME` → whatever you want
 
 ---
 
-## Adding users
+### Option C — ECS (Fargate)
 
-Registration locks after the first account. To add users without opening registration:
+Best for company-wide scale or if you want VPC isolation.
 
 ```bash
-# Option 1: temporarily open registration
-# Set ALLOW_REGISTRATION=true in the task definition env vars, restart, register, set back.
+# Build and push
+docker build -t agentcore-chat .
+docker tag agentcore-chat:latest <ecr-uri>:latest
+docker push <ecr-uri>:latest
+```
 
-# Option 2: connect to the EFS volume and use sqlite3 directly
-# (requires an EC2 instance or ECS exec session in the same VPC)
+ECS task definition notes:
+- Assign a task role with `bedrock:InvokeAgent` (no access keys needed)
+- Mount an EFS volume at `/data` for SQLite persistence, or swap SQLite for RDS Postgres (see below)
+- Set all env vars as ECS secrets via SSM Parameter Store or Secrets Manager
+
+---
+
+### Option D — Docker locally or on a VM
+
+```bash
+# Copy and fill in the env file
+cp backend/.env.example .env
+
+# Run everything
+docker-compose up --build
+```
+
+Frontend served by Vite dev server at :5173, backend at :3001.
+
+---
+
+## Swapping SQLite for Postgres (optional, for scale)
+
+The backend uses SQLite by default — fine for teams up to ~50 concurrent users. For larger deployments:
+
+1. Install `pg` package: `npm install pg --workspace=backend`
+2. Replace `better-sqlite3` calls in `backend/src/db.js` with `pg` queries
+3. Set `DATABASE_URL` instead of `DB_PATH`
+
+The schema in `db.js` is standard SQL and works as-is on Postgres.
+
+---
+
+## Managing users
+
+After first-run setup, `ALLOW_REGISTRATION=false` locks the registration screen. To add users without opening registration:
+
+```bash
+# One-shot: set ALLOW_REGISTRATION=true, register the user, set it back to false
+# Or use the SQLite CLI directly:
+sqlite3 data/chat.db
+
+INSERT INTO users (id, username, password_hash, display_name)
+VALUES (
+  lower(hex(randomblob(16))),
+  'newuser',
+  -- generate hash: node -e "const b=require('bcryptjs');console.log(b.hashSync('password123',12))"
+  '$2a$12$...',
+  'New User'
+);
 ```
 
 ---
 
-## Script reference
+## Project structure
 
-| Script | Purpose |
-|--------|---------|
-| `setup.sh` | Check all prerequisites before deploying |
-| `deploy.sh` | Full deployment from scratch (~10 min), prompts for all config |
-| `update.sh` | Rebuild and redeploy from latest GitHub source |
-| `update.sh --reconfigure` | Change agent ARN / IDs / app name without rebuilding |
-| `manage.sh` | Stop, start, restart, logs, status, config |
-| `restore-state.sh` | Rebuild state file from AWS (e.g. on a second machine) |
-| `teardown.sh` | Delete all AWS resources |
+```
+agentcore-chat/
+├── backend/
+│   ├── src/
+│   │   ├── index.js          # Express app entry
+│   │   ├── db.js             # SQLite init + schema
+│   │   ├── middleware/
+│   │   │   └── auth.js       # JWT verification
+│   │   └── routes/
+│   │       ├── auth.js       # login, register, change-password
+│   │       ├── chat.js       # AgentCore streaming
+│   │       └── history.js    # conversation CRUD
+│   ├── .env.example
+│   └── package.json
+├── frontend/
+│   ├── src/
+│   │   ├── App.jsx           # Root shell + routing
+│   │   ├── index.css         # Global CSS + design tokens
+│   │   ├── components/
+│   │   │   ├── MessageBubble.jsx
+│   │   │   └── Sidebar.jsx
+│   │   ├── hooks/
+│   │   │   └── useAuth.jsx   # Auth context
+│   │   ├── pages/
+│   │   │   ├── LoginPage.jsx
+│   │   │   └── ChatPage.jsx
+│   │   └── utils/
+│   │       └── api.js        # API + SSE streaming client
+│   ├── .env.example
+│   ├── index.html
+│   └── vite.config.js
+├── Dockerfile                # Backend container
+├── docker-compose.yml        # Full-stack local dev
+├── railway.toml              # Railway deploy config
+├── vercel.json               # Vercel frontend deploy
+└── README.md
+```
+
+---
+
+## Security notes
+
+- Passwords are hashed with bcrypt (cost factor 12)
+- JWTs expire after 8 hours; re-login is required
+- Rate limiting: 100 req/15min global, 20 messages/min for chat
+- CORS restricted to `FRONTEND_URL`
+- SQLite file should not be in a web-accessible path
+- In production, run behind HTTPS (Railway/Vercel handle this; for ECS, put an ALB in front)
+
+---
+
+## License
+
+MIT

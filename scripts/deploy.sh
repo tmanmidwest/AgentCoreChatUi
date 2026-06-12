@@ -151,21 +151,13 @@ if [ -n "$ARN_REGION" ] && [ "$ARN_REGION" != "$REGION" ]; then
 fi
 AGENT_REGION="${ARN_REGION:-$REGION}"
 
-# Agent ID
+# Endpoint name
 echo ""
-echo -e "  ${BOLD}Agent ID${NC} — the short ID of your agent (not the full ARN)."
-echo -e "  Example: ABCDE12345"
-read -rp "  Agent ID: " AGENT_ID
-[ -n "$AGENT_ID" ] || error "Agent ID is required."
-success "Agent ID: $AGENT_ID"
-
-# Agent Alias ID
-echo ""
-echo -e "  ${BOLD}Agent Alias ID${NC} — the alias ID (not alias name), shown on the Aliases tab."
-echo -e "  Example: TSTALIASID or a custom alias ID like BCDEF23456"
-read -rp "  Agent Alias ID: " AGENT_ALIAS_ID
-[ -n "$AGENT_ALIAS_ID" ] || error "Agent Alias ID is required."
-success "Agent Alias ID: $AGENT_ALIAS_ID"
+echo -e "  ${BOLD}Endpoint name${NC} — shown in the Endpoints tab of your agent in the Bedrock console."
+echo -e "  Leave blank to use the default (DEFAULT)."
+read -rp "  Endpoint name [DEFAULT]: " AGENT_ENDPOINT_NAME
+AGENT_ENDPOINT_NAME="${AGENT_ENDPOINT_NAME:-DEFAULT}"
+success "Endpoint name: $AGENT_ENDPOINT_NAME"
 
 # ── APP DISPLAY NAME ──────────────────────────────────────────────────────────
 header "App display name"
@@ -251,8 +243,7 @@ echo -e "  ${BOLD}App name:${NC}          $APP_DISPLAY_NAME"
 echo -e "  ${BOLD}Region:${NC}            $REGION"
 echo -e "  ${BOLD}AWS account:${NC}       $ACCOUNT_ID"
 echo -e "  ${BOLD}Agent ARN:${NC}         $AGENT_ARN"
-echo -e "  ${BOLD}Agent ID:${NC}          $AGENT_ID"
-echo -e "  ${BOLD}Agent Alias ID:${NC}    $AGENT_ALIAS_ID"
+echo -e "  ${BOLD}Agent endpoint:${NC}    $AGENT_ENDPOINT_NAME"
 echo -e "  ${BOLD}Agent region:${NC}      $AGENT_REGION"
 echo -e "  ${BOLD}IAM role auth:${NC}     $USE_TASK_ROLE"
 echo -e "  ${BOLD}Open registration:${NC} $ALLOW_REGISTRATION"
@@ -606,13 +597,12 @@ header "Task definition"
 
 # Build the environment variables block
 ENV_VARS="[
-  { \"name\": \"AGENT_ARN\",          \"value\": \"${AGENT_ARN}\" },
-  { \"name\": \"AGENT_ID\",           \"value\": \"${AGENT_ID}\" },
-  { \"name\": \"AGENT_ALIAS_ID\",     \"value\": \"${AGENT_ALIAS_ID}\" },
-  { \"name\": \"AWS_REGION_AGENT\",   \"value\": \"${AGENT_REGION}\" },
-  { \"name\": \"ALLOW_REGISTRATION\", \"value\": \"${ALLOW_REGISTRATION}\" },
-  { \"name\": \"PORT\",               \"value\": \"${CONTAINER_PORT}\" },
-  { \"name\": \"NODE_ENV\",           \"value\": \"production\" }
+  { \"name\": \"AGENT_ARN\",            \"value\": \"${AGENT_ARN}\" },
+  { \"name\": \"AGENT_ENDPOINT_NAME\",  \"value\": \"${AGENT_ENDPOINT_NAME}\" },
+  { \"name\": \"AWS_REGION_AGENT\",     \"value\": \"${AGENT_REGION}\" },
+  { \"name\": \"ALLOW_REGISTRATION\",   \"value\": \"${ALLOW_REGISTRATION}\" },
+  { \"name\": \"PORT\",                 \"value\": \"${CONTAINER_PORT}\" },
+  { \"name\": \"NODE_ENV\",             \"value\": \"production\" }
 ]"
 
 # Sensitive vars come from Secrets Manager
@@ -808,8 +798,7 @@ TASK_DEF_ARN=$TASK_DEF_ARN
 CONTAINER_IMAGE=$CONTAINER_IMAGE
 SECRET_ARN=$SECRET_ARN
 AGENT_ARN=$AGENT_ARN
-AGENT_ID=$AGENT_ID
-AGENT_ALIAS_ID=$AGENT_ALIAS_ID
+AGENT_ENDPOINT_NAME=$AGENT_ENDPOINT_NAME
 AGENT_REGION=$AGENT_REGION
 EOF
 success "State saved to $STATE_FILE"

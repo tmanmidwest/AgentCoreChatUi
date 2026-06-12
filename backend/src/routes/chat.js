@@ -1,20 +1,17 @@
 import { Router } from "express";
 import { v4 as uuidv4 } from "uuid";
 import {
-  BedrockAgentRuntimeClient,
-  InvokeAgentCommand,
-} from "@aws-sdk/client-bedrock-agent-runtime";
+  BedrockAgentCoreRuntimeClient,
+  InvokeAgentRuntimeCommand,
+} from "@aws-sdk/client-bedrock-agentcore-runtime";
 import { getDb } from "../db.js";
 
 export const chatRouter = Router();
 
+// AgentCore runtime client — region comes from the ARN, not the deployment region
 function getAgentClient() {
-  return new BedrockAgentRuntimeClient({
-    region: process.env.AWS_REGION || "us-east-1",
-    // Credentials come from environment variables or instance profile:
-    // AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN
-    // or IAM role if running on ECS/EC2
-  });
+  const region = process.env.AWS_REGION_AGENT || process.env.AWS_REGION || "us-east-1";
+  return new BedrockAgentCoreRuntimeClient({ region });
 }
 
 // POST /api/chat/send
@@ -28,6 +25,11 @@ chatRouter.post("/send", async (req, res) => {
   if (!agentArn) {
     return res.status(500).json({ error: "AGENT_ARN is not configured on the server." });
   }
+
+  // Derive the endpoint name from the ARN or use AGENT_ENDPOINT_NAME override.
+  // ARN format: arn:aws:bedrock-agentcore:REGION:ACCOUNT:runtime/RUNTIME_ID
+  // The endpoint name defaults to "DEFAULT" — override via AGENT_ENDPOINT_NAME if needed.
+  const endpointName = process.env.AGENT_ENDPOINT_NAME || "DEFAULT";
 
   const db = getDb();
   const userId = req.user.sub;
@@ -44,7 +46,6 @@ chatRouter.post("/send", async (req, res) => {
   } else {
     const id = uuidv4();
     const agentSessionId = uuidv4();
-    // Use first ~50 chars of message as title
     const title = message.trim().slice(0, 60) + (message.length > 60 ? "…" : "");
     db.prepare(
       "INSERT INTO conversations (id, user_id, title, agent_session_id) VALUES (?, ?, ?, ?)"
@@ -58,40 +59,7 @@ chatRouter.post("/send", async (req, res) => {
     "INSERT INTO messages (id, conversation_id, role, content) VALUES (?, ?, 'user', ?)"
   ).run(userMsgId, conversation.id, message.trim());
 
-  // Parse ARN to extract agentId and aliasId
-  // ARN format: arn:aws:bedrock-agentcore:REGION:ACCOUNT:runtime/AGENT_ID-ALIAS_ID
-  // or standard: arn:aws:bedrock:REGION:ACCOUNT:agent-alias/AGENT_ID/ALIAS_ID
-  let agentId, agentAliasId;
-
-  // Support both AgentCore runtime ARN and standard Bedrock agent alias ARN
-  const agentCoreMatch = agentArn.match(/runtime\/([^-]+)-(.+)$/);
-  const standardMatch = agentArn.match(/agent-alias\/([^/]+)\/(.+)$/);
-
-  if (agentCoreMatch) {
-    // AgentCore style: extract from the runtime ARN using env overrides if needed
-    agentId = process.env.AGENT_ID;
-    agentAliasId = process.env.AGENT_ALIAS_ID;
-    if (!agentId || !agentAliasId) {
-      return res.status(500).json({
-        error:
-          "For AgentCore runtime ARNs, set AGENT_ID and AGENT_ALIAS_ID in your .env (see README).",
-      });
-    }
-  } else if (standardMatch) {
-    agentId = standardMatch[1];
-    agentAliasId = standardMatch[2];
-  } else {
-    // Fall back to explicit env vars
-    agentId = process.env.AGENT_ID;
-    agentAliasId = process.env.AGENT_ALIAS_ID;
-    if (!agentId || !agentAliasId) {
-      return res.status(500).json({
-        error: "Could not parse agent ID from ARN. Set AGENT_ID and AGENT_ALIAS_ID in .env.",
-      });
-    }
-  }
-
-  // Stream response to client
+  // Set up SSE stream to the browser
   res.setHeader("Content-Type", "text/event-stream");
   res.setHeader("Cache-Control", "no-cache");
   res.setHeader("Connection", "keep-alive");
@@ -101,31 +69,39 @@ chatRouter.post("/send", async (req, res) => {
   let fullResponse = "";
 
   try {
-    const command = new InvokeAgentCommand({
-      agentId,
-      agentAliasId,
+    const command = new InvokeAgentRuntimeCommand({
+      agentRuntimeArn: agentArn,
+      agentRuntimeEndpointName: endpointName,
       sessionId: conversation.agent_session_id,
-      inputText: message.trim(),
+      // AgentCore runtime expects the payload as a JSON string
+      payload: JSON.stringify({ inputText: message.trim() }),
     });
 
     const response = await client.send(command);
 
-    // Stream chunks to client
-    for await (const event of response.completion) {
+    // Stream chunks to the browser as they arrive
+    for await (const event of response.body) {
       if (event.chunk?.bytes) {
-        const text = new TextDecoder().decode(event.chunk.bytes);
+        const raw = new TextDecoder().decode(event.chunk.bytes);
+        // The runtime may return JSON-wrapped chunks or plain text — handle both
+        let text = raw;
+        try {
+          const parsed = JSON.parse(raw);
+          text = parsed.outputText ?? parsed.text ?? parsed.content ?? raw;
+        } catch {
+          // plain text chunk — use as-is
+        }
         fullResponse += text;
         res.write(`data: ${JSON.stringify({ type: "chunk", text })}\n\n`);
       }
     }
 
-    // Save assistant message
+    // Persist the full assistant reply
     const assistantMsgId = uuidv4();
     db.prepare(
       "INSERT INTO messages (id, conversation_id, role, content) VALUES (?, ?, 'assistant', ?)"
     ).run(assistantMsgId, conversation.id, fullResponse);
 
-    // Update conversation timestamp
     db.prepare("UPDATE conversations SET updated_at = datetime('now') WHERE id = ?").run(
       conversation.id
     );
@@ -138,11 +114,15 @@ chatRouter.post("/send", async (req, res) => {
       })}\n\n`
     );
   } catch (err) {
-    console.error("AgentCore error:", err);
-    const errorMsg =
-      err.name === "ThrottlingException"
-        ? "The agent is busy. Please wait a moment and try again."
-        : "The agent returned an error. Please try again.";
+    console.error("AgentCore runtime error:", err);
+    let errorMsg = "The agent returned an error. Please try again.";
+    if (err.name === "ThrottlingException") {
+      errorMsg = "The agent is busy. Please wait a moment and try again.";
+    } else if (err.name === "ValidationException") {
+      errorMsg = "Invalid request to the agent. Check your AGENT_ARN and endpoint name.";
+    } else if (err.name === "AccessDeniedException") {
+      errorMsg = "Access denied. Check that your AWS credentials have bedrock-agentcore:InvokeAgentRuntime permission.";
+    }
     res.write(`data: ${JSON.stringify({ type: "error", error: errorMsg })}\n\n`);
   } finally {
     res.end();

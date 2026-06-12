@@ -88,11 +88,8 @@ if [ "$RECONFIGURE" = "true" ]; then
   read -rp "  Agent ARN [${AGENT_ARN}]: " NEW_AGENT_ARN
   NEW_AGENT_ARN="${NEW_AGENT_ARN:-$AGENT_ARN}"
 
-  read -rp "  Agent ID [${AGENT_ID}]: " NEW_AGENT_ID
-  NEW_AGENT_ID="${NEW_AGENT_ID:-$AGENT_ID}"
-
-  read -rp "  Agent Alias ID [${AGENT_ALIAS_ID}]: " NEW_AGENT_ALIAS_ID
-  NEW_AGENT_ALIAS_ID="${NEW_AGENT_ALIAS_ID:-$AGENT_ALIAS_ID}"
+  read -rp "  Endpoint name [${AGENT_ENDPOINT_NAME:-DEFAULT}]: " NEW_AGENT_ENDPOINT_NAME
+  NEW_AGENT_ENDPOINT_NAME="${NEW_AGENT_ENDPOINT_NAME:-${AGENT_ENDPOINT_NAME:-DEFAULT}}"
 
   ARN_REGION=$(echo "$NEW_AGENT_ARN" | awk -F: '{print $4}')
   read -rp "  Agent region [${AGENT_REGION:-$ARN_REGION}]: " NEW_AGENT_REGION
@@ -101,10 +98,9 @@ if [ "$RECONFIGURE" = "true" ]; then
   read -rp "  App display name [${APP_DISPLAY_NAME:-Agent Chat}]: " NEW_APP_DISPLAY_NAME
   NEW_APP_DISPLAY_NAME="${NEW_APP_DISPLAY_NAME:-${APP_DISPLAY_NAME:-Agent Chat}}"
 
-  # Update state file
+  # Update state variables
   AGENT_ARN="$NEW_AGENT_ARN"
-  AGENT_ID="$NEW_AGENT_ID"
-  AGENT_ALIAS_ID="$NEW_AGENT_ALIAS_ID"
+  AGENT_ENDPOINT_NAME="$NEW_AGENT_ENDPOINT_NAME"
   AGENT_REGION="$NEW_AGENT_REGION"
   APP_DISPLAY_NAME="$NEW_APP_DISPLAY_NAME"
 
@@ -138,13 +134,12 @@ if [ "$RECONFIGURE" = "true" ]; then
 
   CONTAINER_PORT=3001
   ENV_VARS="[
-    { \"name\": \"AGENT_ARN\",          \"value\": \"${AGENT_ARN}\" },
-    { \"name\": \"AGENT_ID\",           \"value\": \"${AGENT_ID}\" },
-    { \"name\": \"AGENT_ALIAS_ID\",     \"value\": \"${AGENT_ALIAS_ID}\" },
-    { \"name\": \"AWS_REGION_AGENT\",   \"value\": \"${AGENT_REGION}\" },
-    { \"name\": \"ALLOW_REGISTRATION\", \"value\": \"false\" },
-    { \"name\": \"PORT\",               \"value\": \"${CONTAINER_PORT}\" },
-    { \"name\": \"NODE_ENV\",           \"value\": \"production\" }
+    { \"name\": \"AGENT_ARN\",            \"value\": \"${AGENT_ARN}\" },
+    { \"name\": \"AGENT_ENDPOINT_NAME\",  \"value\": \"${AGENT_ENDPOINT_NAME}\" },
+    { \"name\": \"AWS_REGION_AGENT\",     \"value\": \"${AGENT_REGION}\" },
+    { \"name\": \"ALLOW_REGISTRATION\",   \"value\": \"false\" },
+    { \"name\": \"PORT\",                 \"value\": \"${CONTAINER_PORT}\" },
+    { \"name\": \"NODE_ENV\",             \"value\": \"production\" }
   ]"
 
   SECRETS_BLOCK="[{ \"name\": \"JWT_SECRET\", \"valueFrom\": \"${SECRET_ARN}:JWT_SECRET::\" }]"
@@ -232,8 +227,7 @@ TASK_DEF_ARN=$TASK_DEF_ARN
 CONTAINER_IMAGE=$CONTAINER_IMAGE
 SECRET_ARN=$SECRET_ARN
 AGENT_ARN=$AGENT_ARN
-AGENT_ID=$AGENT_ID
-AGENT_ALIAS_ID=$AGENT_ALIAS_ID
+AGENT_ENDPOINT_NAME=$AGENT_ENDPOINT_NAME
 AGENT_REGION=$AGENT_REGION
 EOF
   success "State file updated"
