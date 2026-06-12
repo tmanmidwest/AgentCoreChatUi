@@ -125,8 +125,8 @@ if [ "$RECONFIGURE" = "true" ]; then
         \"Version\":\"2012-10-17\",
         \"Statement\":[{
           \"Effect\":\"Allow\",
-          \"Action\":[\"bedrock-agentcore:InvokeAgentRuntime\"],
-          \"Resource\":[\"${AGENT_ARN}\",\"${AGENT_ARN}/runtime-endpoint/*\"]
+          \"Action\":[\"bedrock:InvokeAgent\"],
+          \"Resource\":\"${AGENT_ARN}\"
         }]
       }" 2>/dev/null || warn "Could not update task role policy — check IAM permissions"
     success "Task role policy updated"

@@ -14,7 +14,7 @@ import { requireAuth } from "./middleware/auth.js";
 dotenv.config();
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const PUBLIC_DIR = path.join(__dirname, "../public");
+const PUBLIC_DIR = path.join(__dirname, "../../public");
 
 const app = express();
 const PORT = process.env.PORT || 3001;
@@ -62,12 +62,6 @@ if (fs.existsSync(PUBLIC_DIR)) {
   app.get("*", (req, res) => {
     res.sendFile(path.join(PUBLIC_DIR, "index.html"));
   });
-} else {
-  console.warn(
-    `⚠️  No frontend build found at ${PUBLIC_DIR} — serving API only. ` +
-    `"GET /" will return "Cannot GET /". In production this means the Vite ` +
-    `build wasn't copied here. Check the Dockerfile COPY path and this PUBLIC_DIR.`
-  );
 }
 
 // Init DB then start

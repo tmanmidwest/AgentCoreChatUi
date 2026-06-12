@@ -24,7 +24,7 @@ cd agentcore-chat
 
 # 1. Backend env
 cp backend/.env.example backend/.env
-# Edit backend/.env — fill in AGENT_ARN, AWS creds, JWT_SECRET (AGENT_ENDPOINT_NAME defaults to DEFAULT)
+# Edit backend/.env — fill in AGENT_ARN, AGENT_ID, AGENT_ALIAS_ID, AWS creds, JWT_SECRET
 
 # 2. Frontend env
 cp frontend/.env.example frontend/.env
@@ -45,10 +45,10 @@ Open http://localhost:5173. The first registration creates an admin account; aft
 
 | Variable | Required | Description |
 |----------|----------|-------------|
-| `AGENT_ARN` | ✅ | Full ARN of your AgentCore runtime agent (`arn:aws:bedrock-agentcore:…:runtime/…`) |
-| `AGENT_ENDPOINT_NAME` | – | Endpoint (qualifier) to invoke. Shown in the **Endpoints** tab of your agent. Default: `DEFAULT` |
-| `AWS_REGION_AGENT` | – | Region the AgentCore runtime is in. Falls back to `AWS_REGION`, then `us-east-1` |
-| `AWS_REGION` | ✅ | Default AWS region for the SDK (e.g. `us-east-1`) |
+| `AGENT_ARN` | ✅ | Full ARN of your AgentCore runtime agent |
+| `AGENT_ID` | ✅* | Bedrock agent ID (see note below) |
+| `AGENT_ALIAS_ID` | ✅* | Bedrock agent alias ID (see note below) |
+| `AWS_REGION` | ✅ | Region your agent is in (e.g. `us-east-1`) |
 | `AWS_ACCESS_KEY_ID` | ⚠️ | For local/Vercel/Railway. Omit on ECS (use IAM role) |
 | `AWS_SECRET_ACCESS_KEY` | ⚠️ | Same as above |
 | `JWT_SECRET` | ✅ | Random 32+ char string. Generate: `node -e "console.log(require('crypto').randomBytes(32).toString('hex'))"` |
@@ -57,7 +57,7 @@ Open http://localhost:5173. The first registration creates an admin account; aft
 | `ALLOW_REGISTRATION` | – | `"true"` to open public registration. Default: `false` |
 | `DB_PATH` | – | SQLite file path. Default: `./data/chat.db` |
 
-> **\* AgentCore note:** AgentCore runtime agents are invoked by **runtime ARN + endpoint name**, not by agent ID / alias ID (those belong to the older Bedrock *Agents* service, which this app does not use). Set `AGENT_ARN` to the full `…:runtime/…` ARN and leave `AGENT_ENDPOINT_NAME` as `DEFAULT` unless you created a named endpoint. There is no `AGENT_ID` / `AGENT_ALIAS_ID` to look up.
+> **\* AgentCore ARN note:** AgentCore runtime ARNs (`arn:aws:bedrock-agentcore:…:runtime/…`) don't embed the agent ID and alias ID in a parseable way. You need to set `AGENT_ID` and `AGENT_ALIAS_ID` separately. Find them in the Bedrock console under **Agents → your agent → Aliases**. Standard agent-alias ARNs (`arn:aws:bedrock:…:agent-alias/AGENT_ID/ALIAS_ID`) are parsed automatically.
 
 ### Frontend `.env`
 
@@ -72,9 +72,9 @@ Open http://localhost:5173. The first registration creates an admin account; aft
 
 This repo is designed to be reusable across agents and environments. To point it at a different agent:
 
-1. Set a new `AGENT_ARN` (and `AGENT_ENDPOINT_NAME` if not `DEFAULT`) in the backend `.env`
+1. Set a new `AGENT_ARN` (and `AGENT_ID` / `AGENT_ALIAS_ID`) in the backend `.env`
 2. Update `AWS_REGION` if it's in a different region
-3. Update AWS credentials to an IAM user/role that has `bedrock-agentcore:InvokeAgentRuntime` permission on the new agent
+3. Update AWS credentials to an IAM user/role that has `bedrock:InvokeAgent` permission on the new agent
 4. Restart the backend — no code changes needed
 
 ---
@@ -98,11 +98,8 @@ Railway runs the Docker container and provides a managed SQLite volume.
   "Version": "2012-10-17",
   "Statement": [{
     "Effect": "Allow",
-    "Action": "bedrock-agentcore:InvokeAgentRuntime",
-    "Resource": [
-      "arn:aws:bedrock-agentcore:us-east-1:YOUR_ACCOUNT:runtime/*",
-      "arn:aws:bedrock-agentcore:us-east-1:YOUR_ACCOUNT:runtime/*/runtime-endpoint/*"
-    ]
+    "Action": ["bedrock:InvokeAgent"],
+    "Resource": "arn:aws:bedrock-agentcore:us-east-1:YOUR_ACCOUNT:runtime/*"
   }]
 }
 ```
@@ -134,7 +131,7 @@ docker push <ecr-uri>:latest
 ```
 
 ECS task definition notes:
-- Assign a task role with `bedrock-agentcore:InvokeAgentRuntime` (no access keys needed)
+- Assign a task role with `bedrock:InvokeAgent` (no access keys needed)
 - Mount an EFS volume at `/data` for SQLite persistence, or swap SQLite for RDS Postgres (see below)
 - Set all env vars as ECS secrets via SSM Parameter Store or Secrets Manager
 

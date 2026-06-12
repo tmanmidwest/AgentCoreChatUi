@@ -187,7 +187,7 @@ if [[ "$USE_IAM_ROLE" =~ ^[Yy]$ ]]; then
   AWS_SECRET_ACCESS_KEY_VAL=""
   USE_TASK_ROLE=true
   success "Will use ECS task IAM role for agent access"
-  warn "You must create a task role with bedrock-agentcore:InvokeAgentRuntime permission before the app will work."
+  warn "You must create a task role with bedrock:InvokeAgent permission before the app will work."
   warn "See the README for the exact IAM policy to attach."
 else
   echo ""
@@ -442,7 +442,7 @@ if [ "$USE_TASK_ROLE" = "true" ]; then
     --query 'Role.Arn' --output text 2>/dev/null || true)
 
   if [ -z "$TASK_ROLE_ARN" ]; then
-    log "Creating task role with bedrock-agentcore:InvokeAgentRuntime permission..."
+    log "Creating task role with bedrock:InvokeAgent permission..."
     TASK_ROLE_ARN=$(aws iam create-role \
       --role-name "$TASK_ROLE_NAME" \
       --assume-role-policy-document '{
@@ -462,8 +462,8 @@ if [ "$USE_TASK_ROLE" = "true" ]; then
         \"Version\":\"2012-10-17\",
         \"Statement\":[{
           \"Effect\":\"Allow\",
-          \"Action\":[\"bedrock-agentcore:InvokeAgentRuntime\"],
-          \"Resource\":[\"${AGENT_ARN}\",\"${AGENT_ARN}/runtime-endpoint/*\"]
+          \"Action\":[\"bedrock:InvokeAgent\"],
+          \"Resource\":\"${AGENT_ARN}\"
         }]
       }"
     success "Task role created: $TASK_ROLE_ARN"
