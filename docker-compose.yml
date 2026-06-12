@@ -1,0 +1,39 @@
+version: "3.9"
+
+services:
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    ports:
+      - "3001:3001"
+    environment:
+      - AGENT_ARN=${AGENT_ARN}
+      - AGENT_ID=${AGENT_ID}
+      - AGENT_ALIAS_ID=${AGENT_ALIAS_ID}
+      - AWS_REGION=${AWS_REGION:-us-east-1}
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - AWS_SESSION_TOKEN=${AWS_SESSION_TOKEN}
+      - JWT_SECRET=${JWT_SECRET}
+      - FRONTEND_URL=http://localhost:5173
+      - ALLOW_REGISTRATION=${ALLOW_REGISTRATION:-false}
+    volumes:
+      - chat_data:/data
+    restart: unless-stopped
+
+  frontend:
+    image: node:20-alpine
+    working_dir: /app
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+    ports:
+      - "5173:5173"
+    volumes:
+      - ./frontend:/app
+    environment:
+      - VITE_API_URL=http://localhost:3001
+    depends_on:
+      - backend
+
+volumes:
+  chat_data:
