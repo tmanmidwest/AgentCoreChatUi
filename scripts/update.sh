@@ -133,76 +133,81 @@ if [ "$RECONFIGURE" = "true" ]; then
   fi
 
   CONTAINER_PORT=3001
-  ENV_VARS="[
-    { \"name\": \"AGENT_ARN\",            \"value\": \"${AGENT_ARN}\" },
-    { \"name\": \"AGENT_ENDPOINT_NAME\",  \"value\": \"${AGENT_ENDPOINT_NAME}\" },
-    { \"name\": \"AWS_REGION_AGENT\",     \"value\": \"${AGENT_REGION}\" },
-    { \"name\": \"ALLOW_REGISTRATION\",   \"value\": \"false\" },
-    { \"name\": \"PORT\",                 \"value\": \"${CONTAINER_PORT}\" },
-    { \"name\": \"NODE_ENV\",             \"value\": \"production\" }
-  ]"
 
-  SECRETS_BLOCK="[{ \"name\": \"JWT_SECRET\", \"valueFrom\": \"${SECRET_ARN}:JWT_SECRET::\" }]"
+  # Write task definition to a temp file via python3 — avoids shell JSON quoting issues
+  TASK_DEF_FILE=$(mktemp /tmp/taskdef-XXXXXX.json)
 
-  TASK_DEF_JSON="{
-    \"family\": \"${APP_NAME}-webapp\",
-    \"networkMode\": \"awsvpc\",
-    \"requiresCompatibilities\": [\"FARGATE\"],
-    \"cpu\": \"512\",
-    \"memory\": \"1024\",
-    \"executionRoleArn\": \"${ROLE_ARN}\","
+  python3 - <<PYEOF > "$TASK_DEF_FILE"
+import json
 
-  if [ -n "$TASK_ROLE_ARN" ]; then
-    TASK_DEF_JSON="${TASK_DEF_JSON}
-    \"taskRoleArn\": \"${TASK_ROLE_ARN}\","
-  fi
+task_role_arn = """${TASK_ROLE_ARN}""".strip()
 
-  TASK_DEF_JSON="${TASK_DEF_JSON}
-    \"volumes\": [{
-      \"name\": \"${APP_NAME}-data\",
-      \"efsVolumeConfiguration\": {
-        \"fileSystemId\": \"${EFS_ID}\",
-        \"transitEncryption\": \"ENABLED\",
-        \"authorizationConfig\": {
-          \"accessPointId\": \"${ACCESS_POINT_ID}\",
-          \"iam\": \"DISABLED\"
+definition = {
+    "family": "${APP_NAME}-webapp",
+    "networkMode": "awsvpc",
+    "requiresCompatibilities": ["FARGATE"],
+    "cpu": "512",
+    "memory": "1024",
+    "executionRoleArn": "${ROLE_ARN}",
+    "volumes": [{
+        "name": "${APP_NAME}-data",
+        "efsVolumeConfiguration": {
+            "fileSystemId": "${EFS_ID}",
+            "transitEncryption": "ENABLED",
+            "authorizationConfig": {
+                "accessPointId": "${ACCESS_POINT_ID}",
+                "iam": "DISABLED"
+            }
         }
-      }
     }],
-    \"containerDefinitions\": [{
-      \"name\": \"${APP_NAME}-webapp\",
-      \"image\": \"${CONTAINER_IMAGE}\",
-      \"essential\": true,
-      \"portMappings\": [{ \"containerPort\": ${CONTAINER_PORT}, \"protocol\": \"tcp\" }],
-      \"environment\": ${ENV_VARS},
-      \"secrets\": ${SECRETS_BLOCK},
-      \"mountPoints\": [{
-        \"sourceVolume\": \"${APP_NAME}-data\",
-        \"containerPath\": \"/data\",
-        \"readOnly\": false
-      }],
-      \"healthCheck\": {
-        \"command\": [\"CMD-SHELL\", \"curl -f http://localhost:${CONTAINER_PORT}/api/health || exit 1\"],
-        \"interval\": 30,
-        \"timeout\": 5,
-        \"retries\": 3,
-        \"startPeriod\": 15
-      },
-      \"logConfiguration\": {
-        \"logDriver\": \"awslogs\",
-        \"options\": {
-          \"awslogs-group\": \"${LOG_GROUP}\",
-          \"awslogs-region\": \"${REGION}\",
-          \"awslogs-stream-prefix\": \"ecs\"
+    "containerDefinitions": [{
+        "name": "${APP_NAME}-webapp",
+        "image": "${CONTAINER_IMAGE}",
+        "essential": True,
+        "portMappings": [{"containerPort": ${CONTAINER_PORT}, "protocol": "tcp"}],
+        "environment": [
+            {"name": "AGENT_ARN",            "value": "${AGENT_ARN}"},
+            {"name": "AGENT_ENDPOINT_NAME",  "value": "${AGENT_ENDPOINT_NAME}"},
+            {"name": "AWS_REGION_AGENT",     "value": "${AGENT_REGION}"},
+            {"name": "ALLOW_REGISTRATION",   "value": "false"},
+            {"name": "PORT",                 "value": "${CONTAINER_PORT}"},
+            {"name": "NODE_ENV",             "value": "production"}
+        ],
+        "secrets": [{"name": "JWT_SECRET", "valueFrom": "${SECRET_ARN}:JWT_SECRET::"}],
+        "mountPoints": [{
+            "sourceVolume": "${APP_NAME}-data",
+            "containerPath": "/data",
+            "readOnly": False
+        }],
+        "healthCheck": {
+            "command": ["CMD-SHELL", "curl -f http://localhost:${CONTAINER_PORT}/api/health || exit 1"],
+            "interval": 30,
+            "timeout": 5,
+            "retries": 3,
+            "startPeriod": 15
+        },
+        "logConfiguration": {
+            "logDriver": "awslogs",
+            "options": {
+                "awslogs-group": "${LOG_GROUP}",
+                "awslogs-region": "${REGION}",
+                "awslogs-stream-prefix": "ecs"
+            }
         }
-      }
     }]
-  }"
+}
 
-  TASK_DEF_ARN=$(echo "$TASK_DEF_JSON" | aws ecs register-task-definition \
+if task_role_arn:
+    definition["taskRoleArn"] = task_role_arn
+
+print(json.dumps(definition, indent=2))
+PYEOF
+
+  TASK_DEF_ARN=$(aws ecs register-task-definition \
     --region "$REGION" \
-    --cli-input-json file:///dev/stdin \
+    --cli-input-json "file://${TASK_DEF_FILE}" \
     --query 'taskDefinition.taskDefinitionArn' --output text)
+  rm -f "$TASK_DEF_FILE"
   success "Task definition updated: $TASK_DEF_ARN"
 
   # Update state file with new values
@@ -284,6 +289,7 @@ ENVEOF
 
   log "Building image for linux/amd64 (3-5 minutes on first build, faster after)..."
   docker buildx build \
+    --no-cache \
     --platform linux/amd64 \
     --push \
     -t "$ECR_IMAGE" \
@@ -291,6 +297,7 @@ ENVEOF
 
   ECR_IMAGE_SHA="${SESSION_ACCOUNT}.dkr.ecr.${REGION}.amazonaws.com/${APP_NAME}-webapp:${COMMIT_SHA}"
   docker buildx build \
+    --no-cache \
     --platform linux/amd64 \
     --push \
     -t "$ECR_IMAGE_SHA" \

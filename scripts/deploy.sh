@@ -540,7 +540,7 @@ VITE_API_URL=
 ENVEOF
 
   log "Building Docker image (this takes 3-5 minutes)..."
-  docker buildx build --platform linux/amd64 --push -t "${CONTAINER_IMAGE}" "$BUILD_DIR"
+  docker buildx build --no-cache --platform linux/amd64 --push -t "${CONTAINER_IMAGE}" "$BUILD_DIR"
   rm -rf "$BUILD_DIR"
   trap - EXIT
   success "Image built and pushed to ECR: $CONTAINER_IMAGE"
@@ -595,87 +595,102 @@ aws iam put-role-policy \
 # ── TASK DEFINITION ───────────────────────────────────────────────────────────
 header "Task definition"
 
-# Build the environment variables block
-ENV_VARS="[
-  { \"name\": \"AGENT_ARN\",            \"value\": \"${AGENT_ARN}\" },
-  { \"name\": \"AGENT_ENDPOINT_NAME\",  \"value\": \"${AGENT_ENDPOINT_NAME}\" },
-  { \"name\": \"AWS_REGION_AGENT\",     \"value\": \"${AGENT_REGION}\" },
-  { \"name\": \"ALLOW_REGISTRATION\",   \"value\": \"${ALLOW_REGISTRATION}\" },
-  { \"name\": \"PORT\",                 \"value\": \"${CONTAINER_PORT}\" },
-  { \"name\": \"NODE_ENV\",             \"value\": \"production\" }
-]"
+# Write the task definition to a temp file — avoids shell quoting/newline issues
+TASK_DEF_FILE=$(mktemp /tmp/taskdef-XXXXXX.json)
+trap 'rm -f "$TASK_DEF_FILE"' EXIT
 
-# Sensitive vars come from Secrets Manager
-SECRETS_BLOCK="[
-  { \"name\": \"JWT_SECRET\", \"valueFrom\": \"${SECRET_ARN}:JWT_SECRET::\" }"
+# Build secrets array
 if [ "$USE_TASK_ROLE" = "false" ]; then
-  SECRETS_BLOCK="${SECRETS_BLOCK},
-  { \"name\": \"AWS_ACCESS_KEY_ID\",     \"valueFrom\": \"${SECRET_ARN}:AWS_ACCESS_KEY_ID::\" },
-  { \"name\": \"AWS_SECRET_ACCESS_KEY\", \"valueFrom\": \"${SECRET_ARN}:AWS_SECRET_ACCESS_KEY::\" }"
+  SECRETS_JSON='[
+    {"name":"JWT_SECRET","valueFrom":"'"${SECRET_ARN}"':JWT_SECRET::"},
+    {"name":"AWS_ACCESS_KEY_ID","valueFrom":"'"${SECRET_ARN}"':AWS_ACCESS_KEY_ID::"},
+    {"name":"AWS_SECRET_ACCESS_KEY","valueFrom":"'"${SECRET_ARN}"':AWS_SECRET_ACCESS_KEY::"}
+  ]'
+else
+  SECRETS_JSON='[{"name":"JWT_SECRET","valueFrom":"'"${SECRET_ARN}"':JWT_SECRET::"}]'
 fi
-SECRETS_BLOCK="${SECRETS_BLOCK}]"
 
-# Build task definition JSON
-TASK_DEF_JSON="{
-  \"family\": \"${APP_NAME}-webapp\",
-  \"networkMode\": \"awsvpc\",
-  \"requiresCompatibilities\": [\"FARGATE\"],
-  \"cpu\": \"${CPU}\",
-  \"memory\": \"${MEMORY}\",
-  \"executionRoleArn\": \"${ROLE_ARN}\","
-
+# Build task role line (only present if IAM role auth was chosen)
 if [ -n "$TASK_ROLE_ARN" ]; then
-  TASK_DEF_JSON="${TASK_DEF_JSON}
-  \"taskRoleArn\": \"${TASK_ROLE_ARN}\","
+  TASK_ROLE_LINE='"taskRoleArn": "'"${TASK_ROLE_ARN}"'",'
+else
+  TASK_ROLE_LINE=""
 fi
 
-TASK_DEF_JSON="${TASK_DEF_JSON}
-  \"volumes\": [{
-    \"name\": \"${APP_NAME}-data\",
-    \"efsVolumeConfiguration\": {
-      \"fileSystemId\": \"${EFS_ID}\",
-      \"transitEncryption\": \"ENABLED\",
-      \"authorizationConfig\": {
-        \"accessPointId\": \"${ACCESS_POINT_ID}\",
-        \"iam\": \"DISABLED\"
-      }
-    }
-  }],
-  \"containerDefinitions\": [{
-    \"name\": \"${APP_NAME}-webapp\",
-    \"image\": \"${CONTAINER_IMAGE}\",
-    \"essential\": true,
-    \"portMappings\": [{ \"containerPort\": ${CONTAINER_PORT}, \"protocol\": \"tcp\" }],
-    \"environment\": ${ENV_VARS},
-    \"secrets\": ${SECRETS_BLOCK},
-    \"mountPoints\": [{
-      \"sourceVolume\": \"${APP_NAME}-data\",
-      \"containerPath\": \"/data\",
-      \"readOnly\": false
+# Write clean JSON to temp file using python3 for reliable formatting
+python3 - <<PYEOF > "$TASK_DEF_FILE"
+import json
+
+task_role_arn = """${TASK_ROLE_ARN}""".strip()
+
+definition = {
+    "family": "${APP_NAME}-webapp",
+    "networkMode": "awsvpc",
+    "requiresCompatibilities": ["FARGATE"],
+    "cpu": "${CPU}",
+    "memory": "${MEMORY}",
+    "executionRoleArn": "${ROLE_ARN}",
+    "volumes": [{
+        "name": "${APP_NAME}-data",
+        "efsVolumeConfiguration": {
+            "fileSystemId": "${EFS_ID}",
+            "transitEncryption": "ENABLED",
+            "authorizationConfig": {
+                "accessPointId": "${ACCESS_POINT_ID}",
+                "iam": "DISABLED"
+            }
+        }
     }],
-    \"healthCheck\": {
-      \"command\": [\"CMD-SHELL\", \"curl -f http://localhost:${CONTAINER_PORT}/api/health || exit 1\"],
-      \"interval\": 30,
-      \"timeout\": 5,
-      \"retries\": 3,
-      \"startPeriod\": 15
-    },
-    \"logConfiguration\": {
-      \"logDriver\": \"awslogs\",
-      \"options\": {
-        \"awslogs-group\": \"${LOG_GROUP}\",
-        \"awslogs-region\": \"${REGION}\",
-        \"awslogs-stream-prefix\": \"ecs\"
-      }
-    }
-  }]
-}"
+    "containerDefinitions": [{
+        "name": "${APP_NAME}-webapp",
+        "image": "${CONTAINER_IMAGE}",
+        "essential": True,
+        "portMappings": [{"containerPort": ${CONTAINER_PORT}, "protocol": "tcp"}],
+        "environment": [
+            {"name": "AGENT_ARN",            "value": "${AGENT_ARN}"},
+            {"name": "AGENT_ENDPOINT_NAME",  "value": "${AGENT_ENDPOINT_NAME}"},
+            {"name": "AWS_REGION_AGENT",     "value": "${AGENT_REGION}"},
+            {"name": "ALLOW_REGISTRATION",   "value": "${ALLOW_REGISTRATION}"},
+            {"name": "PORT",                 "value": "${CONTAINER_PORT}"},
+            {"name": "NODE_ENV",             "value": "production"}
+        ],
+        "secrets": json.loads("""${SECRETS_JSON}"""),
+        "mountPoints": [{
+            "sourceVolume": "${APP_NAME}-data",
+            "containerPath": "/data",
+            "readOnly": False
+        }],
+        "healthCheck": {
+            "command": ["CMD-SHELL", "curl -f http://localhost:${CONTAINER_PORT}/api/health || exit 1"],
+            "interval": 30,
+            "timeout": 5,
+            "retries": 3,
+            "startPeriod": 15
+        },
+        "logConfiguration": {
+            "logDriver": "awslogs",
+            "options": {
+                "awslogs-group": "${LOG_GROUP}",
+                "awslogs-region": "${REGION}",
+                "awslogs-stream-prefix": "ecs"
+            }
+        }
+    }]
+}
+
+if task_role_arn:
+    definition["taskRoleArn"] = task_role_arn
+
+print(json.dumps(definition, indent=2))
+PYEOF
 
 log "Registering task definition..."
-TASK_DEF_ARN=$(echo "$TASK_DEF_JSON" | aws ecs register-task-definition \
+TASK_DEF_ARN=$(aws ecs register-task-definition \
   --region "$REGION" \
-  --cli-input-json file:///dev/stdin \
+  --cli-input-json "file://${TASK_DEF_FILE}" \
   --query 'taskDefinition.taskDefinitionArn' --output text)
+rm -f "$TASK_DEF_FILE"
+trap - EXIT
 success "Task definition: $TASK_DEF_ARN"
 
 # ── APPLICATION LOAD BALANCER ─────────────────────────────────────────────────
