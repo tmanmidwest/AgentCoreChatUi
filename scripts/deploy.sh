@@ -14,7 +14,7 @@ set -euo pipefail
 
 # ── FIXED CONFIGURATION ───────────────────────────────────────────────────────
 APP_NAME="agentcore-chat"
-GITHUB_REPO="https://github.com/tmanmidwest/agentcore-chat.git"   # ← update this when you push to GitHub
+GITHUB_REPO="https://github.com/tmanmidwest/AgentCoreChatUi.git"
 CONTAINER_PORT=3001
 CPU=512        # 0.5 vCPU  (backend is heavier than a static app)
 MEMORY=1024    # 1 GB

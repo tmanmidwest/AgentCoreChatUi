@@ -18,7 +18,7 @@
 
 set -euo pipefail
 
-GITHUB_REPO="https://github.com/tmanmidwest/agentcore-chat.git"   # ← keep in sync with deploy.sh
+GITHUB_REPO="https://github.com/tmanmidwest/AgentCoreChatUi.git"   # ← keep in sync with deploy.sh
 
 RED='\033[0;31m'
 GREEN='\033[0;32m'
